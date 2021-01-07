@@ -655,6 +655,13 @@ dtb-$(CONFIG_ARCH_SDM429) += sdm429-mtp.dtb \
 endif
 
 dtb-$(CONFIG_ARCH_SDM845_VM) += sdm845-vm.dtb
+dtb-$(CONFIG_ARCH_SDM845) := xiaomi/beryllium/beryllium-p0-v2.dtb \
+	xiaomi/beryllium/beryllium-p0-v2.1.dtb \
+	xiaomi/beryllium/beryllium-p1-v2.1.dtb \
+	xiaomi/beryllium/beryllium-p2-v2.1.dtb \
+	xiaomi/beryllium/beryllium-p2-v2.1.dtb \
+	xiaomi/beryllium/beryllium-mp-v2.1.dtb
+	
 
 always		:= $(dtb-y)
 subdir-y	:= $(dts-dirs)

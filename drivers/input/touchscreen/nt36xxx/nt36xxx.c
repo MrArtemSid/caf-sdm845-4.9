@@ -25,6 +25,7 @@
 #include <linux/input/mt.h>
 #include <linux/of_gpio.h>
 #include <linux/of_irq.h>
+#include <linux/slab.h>
 
 #if defined(CONFIG_DRM_MSM)
 #include <linux/msm_drm_notify.h>

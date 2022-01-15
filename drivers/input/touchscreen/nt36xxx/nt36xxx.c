@@ -26,8 +26,8 @@
 #include <linux/of_gpio.h>
 #include <linux/of_irq.h>
 
-#if defined(CONFIG_DRM_PANEL)
-#include <drm/drm_panel.h>
+#if defined(CONFIG_DRM_MSM)
+#include <linux/msm_drm_notify.h>
 #elif defined(CONFIG_FB)
 #include <linux/notifier.h>
 #include <linux/fb.h>
@@ -60,16 +60,12 @@ extern void nvt_mp_proc_deinit(void);
 
 struct nvt_ts_data *ts;
 
-#if defined(CONFIG_DRM_PANEL)
-static struct drm_panel *active_panel;
-#endif
-
 #if BOOT_UPDATE_FIRMWARE
 static struct workqueue_struct *nvt_fwu_wq;
 extern void Boot_Update_Firmware(struct work_struct *work);
 #endif
 
-#if defined(CONFIG_DRM_PANEL)
+#if defined(CONFIG_DRM_MSM)
 static int nvt_drm_notifier_callback(struct notifier_block *self, unsigned long event, void *data);
 #elif defined(CONFIG_FB)
 static int nvt_fb_notifier_callback(struct notifier_block *self, unsigned long event, void *data);
@@ -1197,79 +1193,6 @@ out:
 	return ret;
 }
 
-#if defined(CONFIG_DRM_PANEL)
-static int nvt_ts_check_dt(struct device_node *np)
-{
-	int i;
-	int count;
-	struct device_node *node;
-	struct drm_panel *panel;
-
-	count = of_count_phandle_with_args(np, "panel", NULL);
-	if (count <= 0)
-		return 0;
-
-	for (i = 0; i < count; i++) {
-		node = of_parse_phandle(np, "panel", i);
-		panel = of_drm_find_panel(node);
-		of_node_put(node);
-		if (!IS_ERR(panel)) {
-			active_panel = panel;
-			NVT_LOG(" %s:find\n", __func__);
-			return 0;
-		}
-	}
-
-	NVT_ERR(" %s: not find\n", __func__);
-	return -ENODEV;
-}
-
-static int nvt_ts_check_default_tp(struct device_node *dt, const char *prop)
-{
-	const char **active_tp = NULL;
-	int count, tmp, score = 0;
-	const char *active;
-	int ret, i;
-
-	count = of_property_count_strings(dt->parent, prop);
-	if (count <= 0 || count > 3)
-		return -ENODEV;
-
-	active_tp = kcalloc(count, sizeof(char *),  GFP_KERNEL);
-	if (!active_tp) {
-		NVT_ERR("FTS alloc failed\n");
-		return -ENOMEM;
-	}
-
-	ret = of_property_read_string_array(dt->parent, prop,
-			active_tp, count);
-	if (ret < 0) {
-		NVT_ERR("fail to read %s %d\n", prop, ret);
-		ret = -ENODEV;
-		goto out;
-	}
-
-	for (i = 0; i < count; i++) {
-		active = active_tp[i];
-		if (active != NULL) {
-			tmp = of_device_is_compatible(dt, active);
-			if (tmp > 0)
-				score++;
-		}
-	}
-
-	if (score <= 0) {
-		NVT_ERR("not match this driver\n");
-		ret = -ENODEV;
-		goto out;
-	}
-	ret = 0;
-out:
-	kfree(active_tp);
-	return ret;
-}
-#endif
-
 /*******************************************************
  * Description:
  *     Novatek touchscreen driver probe function.
@@ -1513,17 +1436,6 @@ static int32_t nvt_ts_probe(struct i2c_client *client,
 
 	NVT_LOG("start\n");
 
-#if defined(CONFIG_DRM)
-	if (nvt_ts_check_dt(dp)) {
-		if (!nvt_ts_check_default_tp(dp, "qcom,i2c-touch-active"))
-			ret = -EPROBE_DEFER;
-		else
-			ret = -ENODEV;
-
-		return ret;
-	}
-#endif
-
 	ts = devm_kzalloc(&client->dev, sizeof(struct nvt_ts_data), GFP_KERNEL);
 	if (ts == NULL) {
 		NVT_ERR("failed to allocated memory for nvt ts data\n");
@@ -1549,11 +1461,9 @@ static int32_t nvt_ts_probe(struct i2c_client *client,
 
 #if defined(CONFIG_DRM)
 	ts->drm_notif.notifier_call = nvt_drm_notifier_callback;
-
-	if (active_panel &&
-		drm_panel_notifier_register(active_panel,
-			&ts->drm_notif) < 0) {
-		NVT_ERR("register notifier failed!\n");
+	ret = msm_drm_register_client(&ts->drm_notif);
+	if(ret) {
+		NVT_ERR("register drm_notifier failed. ret=%d\n", ret);
 		goto err_register_drm_notif_failed;
 	}
 #elif defined(CONFIG_HAS_EARLYSUSPEND)
@@ -1571,8 +1481,8 @@ static int32_t nvt_ts_probe(struct i2c_client *client,
 	return 0;
 
 #if defined(CONFIG_DRM)
-	if (active_panel)
-		drm_panel_notifier_unregister(active_panel, &ts->drm_notif);
+	if (msm_drm_unregister_client(&ts->drm_notif))
+		NVT_ERR("Error occurred while unregistering drm_notifier.\n");
 err_register_drm_notif_failed:
 
 #elif defined(CONFIG_HAS_EARLYSUSPEND)
@@ -1594,9 +1504,9 @@ static int32_t nvt_ts_remove(struct i2c_client *client)
 {
 	NVT_LOG("Removing driver...\n");
 
-#if defined(CONFIG_DRM_PANEL)
-	if (active_panel)
-		drm_panel_notifier_unregister(active_panel, &ts->drm_notif);
+#if defined(CONFIG_DRM_MSM)
+	if (msm_drm_unregister_client(&ts->drm_notif))
+		NVT_ERR("Error occurred while unregistering drm_notifier.\n");
 #elif defined(CONFIG_FB)
 	if (fb_unregister_client(&ts->fb_notif))
 		NVT_ERR("Error occurred while unregistering fb_notifier.\n");
@@ -1665,9 +1575,9 @@ static void nvt_ts_shutdown(struct i2c_client *client)
 
 	nvt_irq_enable(false);
 
-#if defined(CONFIG_DRM_PANEL)
-	if (active_panel)
-		drm_panel_notifier_unregister(active_panel, &ts->drm_notif);
+#if defined(CONFIG_DRM_MSM)
+	if (msm_drm_unregister_client(&ts->drm_notif))
+		NVT_ERR("Error occurred while unregistering drm_notifier.\n");
 #elif defined(CONFIG_FB)
 	if (fb_unregister_client(&ts->fb_notif))
 		NVT_ERR("Error occurred while unregistering fb_notifier.\n");
@@ -1841,11 +1751,11 @@ static int32_t nvt_ts_resume(struct device *dev)
 	return 0;
 }
 
-#if defined(CONFIG_DRM_PANEL)
+#if defined(CONFIG_DRM_MSM)
 static int nvt_drm_notifier_callback(struct notifier_block *self,
 	unsigned long event, void *data)
 {
-	struct drm_panel_notifier *evdata = data;
+	struct msm_drm_notifier *evdata = data;
 	int *blank;
 	struct nvt_ts_data *ts =
 		container_of(self, struct nvt_ts_data, drm_notif);
@@ -1855,13 +1765,13 @@ static int nvt_drm_notifier_callback(struct notifier_block *self,
 
 	blank = evdata->data;
 
-	if (event == DRM_PANEL_EARLY_EVENT_BLANK) {
-		if (*blank == DRM_PANEL_BLANK_POWERDOWN) {
+	if (event == MSM_DRM_EARLY_EVENT_BLANK) {
+		if (*blank == MSM_DRM_BLANK_POWERDOWN) {
 			NVT_LOG("event=%lu, *blank=%d\n", event, *blank);
 			nvt_ts_suspend(&ts->client->dev);
 		}
-	} else if (event == DRM_PANEL_EVENT_BLANK) {
-		if (*blank == DRM_PANEL_BLANK_UNBLANK) {
+	} else if (event == MSM_DRM_EVENT_BLANK) {
+		if (*blank == MSM_DRM_BLANK_UNBLANK) {
 			NVT_LOG("event=%lu, *blank=%d\n", event, *blank);
 			nvt_ts_resume(&ts->client->dev);
 		}
